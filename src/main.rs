@@ -844,14 +844,45 @@ fn title_bar(ctx: &egui::Context, logo_tex: &egui::TextureHandle) {
         });
 }
 
-fn window_border(ctx: &egui::Context) {
-    if is_maximized(ctx) {
+/// Asks DWM for the Windows 11 rounded corners, a thin border and the drop shadow,
+/// which an undecorated window doesn't get by default.
+#[cfg(windows)]
+fn style_window(cc: &eframe::CreationContext) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::ffi::c_void;
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
+        DWMWCP_ROUND,
+    };
+    use windows_sys::Win32::UI::Controls::MARGINS;
+
+    let Ok(handle) = cc.window_handle() else {
         return;
+    };
+    let RawWindowHandle::Win32(win) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = win.hwnd.get() as *mut c_void;
+
+    let corner = DWMWCP_ROUND;
+    let b = theme::BORDER_STRONG;
+    let border = u32::from_le_bytes([b.r(), b.g(), b.b(), 0]); // COLORREF is 0x00BBGGRR
+    // One extended pixel is enough for DWM to draw the shadow again.
+    let margins = MARGINS { cxLeftWidth: 0, cxRightWidth: 0, cyTopHeight: 0, cyBottomHeight: 1 };
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as _,
+            &corner as *const _ as *const c_void,
+            std::mem::size_of_val(&corner) as u32,
+        );
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR as _, &border as *const u32 as *const c_void, 4);
+        DwmExtendFrameIntoClientArea(hwnd, &margins);
     }
-    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("window_border"));
-    ctx.layer_painter(layer)
-        .rect_stroke(ctx.screen_rect().shrink(0.5), 0.0, egui::Stroke::new(1.0_f32, theme::BORDER_STRONG));
 }
+
+#[cfg(not(windows))]
+fn style_window(_cc: &eframe::CreationContext) {}
 
 fn wordmark(ui: &mut egui::Ui, size: f32, spacing: f32) {
     let mut job = egui::text::LayoutJob::default();
@@ -1570,7 +1601,6 @@ impl eframe::App for SoarApp {
         } else {
             self.show_login(ctx);
         }
-        window_border(ctx);
     }
 }
 
@@ -1627,6 +1657,7 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| {
             setup_fonts(&cc.egui_ctx);
             apply_style(&cc.egui_ctx);
+            style_window(cc);
             Ok(Box::new(SoarApp::new(&cc.egui_ctx)))
         }),
     )

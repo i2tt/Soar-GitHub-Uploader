@@ -2376,9 +2376,11 @@ dependencies = [
  "colored",
  "eframe",
  "image",
+ "raw-window-handle",
  "reqwest",
  "serde",
  "serde_json",
+ "windows-sys 0.59.0",
  "winresource",
 ]
 
