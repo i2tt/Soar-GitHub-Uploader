@@ -320,6 +320,10 @@ mod icons {
         Trash,
         Check,
         Alert,
+        Minimize,
+        Maximize,
+        Restore,
+        Close,
     }
 
     // Coordinates below are on a 24x24 grid, scaled to the target rect.
@@ -463,13 +467,24 @@ mod icons {
                 pen.line(&[(12.0, 9.5), (12.0, 14.0)]);
                 pen.dot(12.0, 17.0, 1.1);
             }
+            Icon::Minimize => pen.line(&[(4.0, 12.0), (20.0, 12.0)]),
+            Icon::Maximize => pen.closed(&[(4.0, 4.0), (20.0, 4.0), (20.0, 20.0), (4.0, 20.0)]),
+            Icon::Restore => {
+                pen.closed(&[(4.0, 8.0), (16.0, 8.0), (16.0, 20.0), (4.0, 20.0)]);
+                pen.line(&[(8.0, 8.0), (8.0, 4.0), (20.0, 4.0), (20.0, 16.0), (16.0, 16.0)]);
+            }
+            Icon::Close => {
+                pen.line(&[(4.0, 4.0), (20.0, 20.0)]);
+                pen.line(&[(20.0, 4.0), (4.0, 20.0)]);
+            }
         }
     }
 }
 
 use icons::Icon;
 
-const LOGO_PNG: &[u8] = include_bytes!("../assets/icon_small.png");
+const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+const ICON_PNG: &[u8] = include_bytes!("../assets/icon_small.png");
 
 fn decode_image(bytes: &[u8]) -> Option<egui::ColorImage> {
     let img = image::load_from_memory(bytes).ok()?.to_rgba8();
@@ -716,9 +731,126 @@ fn avatar(ui: &mut egui::Ui, name: &str, image: Option<&egui::TextureHandle>, si
         .circle_stroke(rect.center(), size / 2.0 + 2.0, egui::Stroke::new(1.0_f32, theme::BORDER_STRONG));
 }
 
-fn logo(ui: &mut egui::Ui, tex: &egui::TextureHandle, size: f32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    egui::Image::new((tex.id(), rect.size())).paint_at(ui, rect);
+fn logo(ui: &mut egui::Ui, tex: &egui::TextureHandle, height: f32) {
+    let [w, h] = tex.size();
+    let size = egui::vec2(height * w as f32 / h as f32, height);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    egui::Image::new((tex.id(), size)).paint_at(ui, rect);
+}
+
+fn is_maximized(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().maximized.unwrap_or(false))
+}
+
+/// The window has no OS decorations, so its edges start the resize themselves.
+fn handle_resize(ctx: &egui::Context) {
+    use egui::viewport::ResizeDirection as Dir;
+    use egui::CursorIcon as Cursor;
+
+    if is_maximized(ctx) {
+        return;
+    }
+    let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    let rect = ctx.screen_rect();
+    let edge = 5.0;
+    let left = pos.x - rect.left() < edge;
+    let right = rect.right() - pos.x < edge;
+    let top = pos.y - rect.top() < edge;
+    let bottom = rect.bottom() - pos.y < edge;
+
+    let (dir, cursor) = match (left, right, top, bottom) {
+        (true, _, true, _) => (Dir::NorthWest, Cursor::ResizeNorthWest),
+        (_, true, true, _) => (Dir::NorthEast, Cursor::ResizeNorthEast),
+        (true, _, _, true) => (Dir::SouthWest, Cursor::ResizeSouthWest),
+        (_, true, _, true) => (Dir::SouthEast, Cursor::ResizeSouthEast),
+        (true, ..) => (Dir::West, Cursor::ResizeWest),
+        (_, true, ..) => (Dir::East, Cursor::ResizeEast),
+        (_, _, true, _) => (Dir::North, Cursor::ResizeNorth),
+        (_, _, _, true) => (Dir::South, Cursor::ResizeSouth),
+        _ => return,
+    };
+    ctx.set_cursor_icon(cursor);
+    if ctx.input(|i| i.pointer.primary_pressed()) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+    }
+}
+
+fn title_button(ui: &mut egui::Ui, rect: egui::Rect, icon: Icon, close: bool) -> bool {
+    let resp = ui.interact(rect, ui.id().with(rect.left() as i32), egui::Sense::click());
+    let hover = if close { theme::DANGER } else { theme::tint(theme::INK, 18) };
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 0.0, hover);
+    }
+    let color = if resp.hovered() { theme::INK_HI } else { theme::MUTED };
+    icons::paint(ui.painter(), egui::Rect::from_center_size(rect.center(), egui::vec2(11.0, 11.0)), icon, color);
+    resp.clicked()
+}
+
+fn title_bar(ctx: &egui::Context, logo_tex: &egui::TextureHandle) {
+    egui::TopBottomPanel::top("title_bar")
+        .exact_height(38.0)
+        .show_separator_line(false)
+        .frame(egui::Frame::none().fill(theme::SIDEBAR))
+        .show(ctx, |ui| {
+            let rect = ui.max_rect();
+            let maximized = is_maximized(ctx);
+
+            // Registered before the buttons so the buttons, drawn on top, win the clicks.
+            let drag = ui.interact(rect, ui.id().with("drag"), egui::Sense::click_and_drag());
+            if drag.double_clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            } else if drag.drag_started_by(egui::PointerButton::Primary) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+
+            let painter = ui.painter();
+            painter.rect_filled(
+                egui::Rect::from_min_max(rect.left_bottom() - egui::vec2(0.0, 1.0), rect.right_bottom()),
+                0.0,
+                theme::BORDER,
+            );
+
+            let [w, h] = logo_tex.size();
+            let mark = egui::vec2(16.0 * w as f32 / h as f32, 16.0);
+            let mark_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, rect.center().y), mark);
+            egui::Image::new((logo_tex.id(), mark)).paint_at(ui, mark_rect);
+
+            let title = painter.layout_no_wrap("Soar GitHub Uploader".into(), f_semi(12.5), theme::TEXT);
+            let title_pos = egui::pos2(mark_rect.right() + 12.0, rect.center().y - title.size().y / 2.0);
+            let byline_x = title_pos.x + title.size().x + 8.0;
+            painter.galley(title_pos, title, theme::TEXT);
+            painter.text(
+                egui::pos2(byline_x, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                "by i2tt & K2CV",
+                f_regular(12.0),
+                theme::FAINT,
+            );
+
+            let size = egui::vec2(46.0, rect.height());
+            let slot = |i: f32| egui::Rect::from_min_size(egui::pos2(rect.right() - size.x * i, rect.top()), size);
+            if title_button(ui, slot(1.0), Icon::Close, true) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            let max_icon = if maximized { Icon::Restore } else { Icon::Maximize };
+            if title_button(ui, slot(2.0), max_icon, false) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+            if title_button(ui, slot(3.0), Icon::Minimize, false) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+        });
+}
+
+fn window_border(ctx: &egui::Context) {
+    if is_maximized(ctx) {
+        return;
+    }
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("window_border"));
+    ctx.layer_painter(layer)
+        .rect_stroke(ctx.screen_rect().shrink(0.5), 0.0, egui::Stroke::new(1.0_f32, theme::BORDER_STRONG));
 }
 
 fn wordmark(ui: &mut egui::Ui, size: f32, spacing: f32) {
@@ -834,6 +966,8 @@ enum ActiveTab {
     Credits,
 }
 
+const DEVELOPERS: [&str; 2] = ["i2tt", "K2CV"];
+
 const LICENSES: [(&str, &str); 5] = [
     ("None", ""),
     ("MIT", "mit"),
@@ -848,6 +982,8 @@ struct SoarApp {
     user: GitHubUser,
     avatar: Option<egui::TextureHandle>,
     logo: egui::TextureHandle,
+    /// Filled the first time Credits opens, in `DEVELOPERS` order.
+    dev_avatars: Vec<Option<egui::TextureHandle>>,
     active_tab: ActiveTab,
 
     repo_name: String,
@@ -872,6 +1008,7 @@ impl SoarApp {
             user: GitHubUser::default(),
             avatar: None,
             logo: ctx.load_texture("logo", logo_image, egui::TextureOptions::LINEAR),
+            dev_avatars: Vec::new(),
             active_tab: ActiveTab::Publish,
 
             repo_name: String::new(),
@@ -989,7 +1126,7 @@ impl SoarApp {
                 let height = ui.max_rect().height();
                 ui.add_space(((height - 580.0) / 2.0).max(24.0));
                 ui.vertical_centered(|ui| {
-                    logo(ui, &self.logo, 88.0);
+                    logo(ui, &self.logo, 92.0);
                     ui.add_space(14.0);
                     wordmark(ui, 40.0, 12.0);
                     ui.add_space(-6.0);
@@ -1055,8 +1192,9 @@ impl SoarApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    logo(ui, &self.logo, 42.0);
                     ui.add_space(4.0);
+                    logo(ui, &self.logo, 40.0);
+                    ui.add_space(8.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         wordmark(ui, 22.0, 5.0);
@@ -1080,6 +1218,12 @@ impl SoarApp {
                         self.active_tab = tab;
                         if tab == ActiveTab::Manage {
                             self.refresh_repos();
+                        }
+                        if tab == ActiveTab::Credits && self.dev_avatars.is_empty() {
+                            self.dev_avatars = DEVELOPERS
+                                .iter()
+                                .map(|dev| load_avatar(ctx, &format!("https://github.com/{dev}.png")))
+                                .collect();
                         }
                     }
                 }
@@ -1367,7 +1511,7 @@ impl SoarApp {
         card(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(10.0);
-                logo(ui, &self.logo, 80.0);
+                logo(ui, &self.logo, 84.0);
                 ui.add_space(12.0);
                 wordmark(ui, 34.0, 10.0);
                 ui.add_space(-4.0);
@@ -1393,12 +1537,12 @@ impl SoarApp {
         ui.add_space(14.0);
         ui.label(egui::RichText::new("DEVELOPERS").font(f_semi(11.0)).color(theme::FAINT));
         ui.add_space(2.0);
-        let devs = [("i2tt", "https://github.com/i2tt"), ("K2CV", "https://github.com/K2CV")];
         ui.columns(2, |cols| {
-            for (col, (name, url)) in cols.iter_mut().zip(devs) {
+            for (i, (col, name)) in cols.iter_mut().zip(DEVELOPERS).enumerate() {
+                let url = format!("https://github.com/{name}");
                 card(col, |ui| {
                     ui.horizontal(|ui| {
-                        avatar(ui, name, None, 46.0);
+                        avatar(ui, name, self.dev_avatars.get(i).and_then(Option::as_ref), 46.0);
                         ui.add_space(4.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
@@ -1407,7 +1551,7 @@ impl SoarApp {
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if button(ui, Some(Icon::External), "GitHub", egui::vec2(0.0, 32.0), Kind::Ghost).clicked() {
-                                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(&url));
                             }
                         });
                     });
@@ -1419,11 +1563,19 @@ impl SoarApp {
 
 impl eframe::App for SoarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.authenticated {
+        handle_resize(ctx);
+        title_bar(ctx, &self.logo);
+        if self.authenticated {
+            self.show_main(ctx);
+        } else {
             self.show_login(ctx);
-            return;
         }
+        window_border(ctx);
+    }
+}
 
+impl SoarApp {
+    fn show_main(&mut self, ctx: &egui::Context) {
         self.show_sidebar(ctx);
 
         egui::CentralPanel::default()
@@ -1452,7 +1604,7 @@ impl eframe::App for SoarApp {
 }
 
 fn main() -> eframe::Result<()> {
-    let icon = image::load_from_memory(LOGO_PNG).expect("bundled logo is a valid PNG").to_rgba8();
+    let icon = image::load_from_memory(ICON_PNG).expect("bundled icon is a valid PNG").to_rgba8();
     let icon = egui::IconData {
         width: icon.width(),
         height: icon.height(),
@@ -1464,6 +1616,7 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1060.0, 720.0])
             .with_min_inner_size([860.0, 580.0])
             .with_title("Soar GitHub Uploader - Made By i2tt & K2CV")
+            .with_decorations(false)
             .with_icon(std::sync::Arc::new(icon)),
         ..Default::default()
     };
