@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="128" alt="Soar icon" />
+</p>
+
 # Soar Team - GitHub Uploader
 
 <p align="center">
@@ -60,10 +64,10 @@ cargo run --release
 
 ### Application Tabs
 
-- `⚡ Publish Repository`: Create new repo, select license, specify folder path, and push
-- `🗑 Manage & Delete Repos`: List all your repositories with star counts and delete any repo with one click
-- `👤 Account Profile`: View authenticated account stats and details
-- `📜 Credits`: Developer credits and project links
+- `Publish`: create a repo, pick its visibility and license, and push a local folder to it
+- `Repositories`: list your repositories with star counts, open one, or delete it after a confirmation
+- `Account`: your GitHub avatar, name, and public repo count
+- `Credits`: developers and project links
 
 ---
 
